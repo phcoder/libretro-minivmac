@@ -45,6 +45,7 @@ die(const char *fmt, ...)
     exit(EXIT_FAILURE);
 }
 
+#ifndef __LIBRETRO__
 static char*
 file_load(const char* path, size_t* siz)
 {
@@ -59,6 +60,7 @@ file_load(const char* path, size_t* siz)
     fclose(fd);
     return buf;
 }
+#endif
 
 static char*
 str_duplicate(const char *src)
@@ -91,7 +93,8 @@ dir_list(const char *dir, int return_subdirs, size_t *count)
     const DIR *none = NULL;
     size_t capacity = 32;
     size_t size;
-    DIR *z;
+    DIR *z = NULL;
+    struct retro_vfs_dir_handle *zh = NULL;
 
     assert(dir);
     assert(count);
@@ -103,24 +106,41 @@ dir_list(const char *dir, int return_subdirs, size_t *count)
 
     size = 0;
 
-    z = opendir(dir);
-    if (z != none) {
+    if (vfs_interface)
+	    zh = vfs_interface->opendir(dir, false);
+    else
+	    z = opendir(dir);
+    if (z != none || zh != NULL) {
         int nonempty = 1;
-        struct dirent *data = readdir(z);
-        nonempty = (data != NULL);
+        struct dirent *data;
+	if (z) {
+		data = readdir(z);
+		nonempty = (data != NULL);
+	} else if (zh)
+		nonempty = vfs_interface->readdir(zh);
         if (!nonempty) return NULL;
 
         do {
-            DIR *y;
             char *p;
-            int is_subdir;
-            if (data->d_name[0] == '.')
+            int is_subdir = 0;
+	    const char *name = NULL;
+	    if (z)
+		    name = data->d_name;
+	    else if (zh)
+		    name = vfs_interface->dirent_get_name(zh);
+            if (name[0] == '.')
                 continue;
 
-            strncpy(buffer + n, data->d_name, MAX_PATH_LEN-n);
-            y = opendir(buffer);
-            is_subdir = (y != NULL);
-            if (y != NULL) closedir(y);
+
+	    if (z) {
+		    DIR *y;
+		    strncpy(buffer + n, name, MAX_PATH_LEN-n);
+		    y = opendir(buffer);
+		    is_subdir = (y != NULL);
+		    if (y != NULL) closedir(y);
+	    } else if (zh) {
+		    is_subdir = vfs_interface->dirent_is_dir(zh);
+	    }
 
             if ((return_subdirs && is_subdir) || (!is_subdir && !return_subdirs)){
                 if (!size) {
@@ -132,13 +152,14 @@ dir_list(const char *dir, int return_subdirs, size_t *count)
                     assert(results);
                     if (!results) free(old);
                 }
-                p = str_duplicate(data->d_name);
+                p = str_duplicate(name);
                 results[size++] = p;
             }
-        } while ((data = readdir(z)) != NULL);
+        } while ((z != NULL && (data = readdir(z)) != NULL) || (zh != NULL && vfs_interface->readdir(zh)));
     }
 
     if (z) closedir(z);
+    if (zh) vfs_interface->closedir(zh);
     *count = size;
     return results;
 }

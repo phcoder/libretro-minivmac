@@ -113,19 +113,38 @@ void retro_set_input_poll(retro_input_poll_t cb)
 }
 
 static char CMDFILE[512];
+struct retro_vfs_interface *vfs_interface;
 
 int loadcmdfile(char *argv)
 {
    int res  = 0;
-   FILE *fp = fopen(argv,"r");
+   memset(CMDFILE, 0, sizeof(CMDFILE));
+   if (vfs_interface) {
+	   struct retro_vfs_file_handle *h = vfs_interface->open(argv, RETRO_VFS_FILE_ACCESS_READ, RETRO_VFS_FILE_ACCESS_HINT_NONE);
+	   char *p;
+	   if (h) {
+		   vfs_interface->read(h, CMDFILE, sizeof(CMDFILE) - 1);
+		   vfs_interface->close(h);
+		   res = 1;
+	   }
 
-   if (fp)
-   {
-      if ( fgets (CMDFILE , 512 , fp) != NULL )
-         res=1;	
-      fclose (fp);
+	   p = strchr(CMDFILE, '\n');
+	   if (p)
+		   *p = '\0';
+	   p = strchr(CMDFILE, '\r');
+	   if (p)
+		   *p = '\0';
+   } else {
+	   FILE *fp = fopen(argv,"r");
+
+	   if (fp)
+	   {
+		   if ( fgets (CMDFILE , 512 , fp) != NULL )
+			   res=1;	
+		   fclose (fp);
+	   }
    }
-
+   
    return res;
 }
 
@@ -351,6 +370,13 @@ void retro_set_environment(retro_environment_t cb)
    };
 
    cb(RETRO_ENVIRONMENT_SET_VARIABLES, variables);
+
+   struct retro_vfs_interface_info vfs_interface_info;
+   vfs_interface_info.required_interface_version = 3;
+   vfs_interface_info.iface = NULL;
+   if (cb(RETRO_ENVIRONMENT_GET_VFS_INTERFACE, &vfs_interface_info))
+	   vfs_interface = vfs_interface_info.iface;
+
 }
 
 static void update_variables(void)
